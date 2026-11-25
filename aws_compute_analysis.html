@@ -1,0 +1,826 @@
+```html
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>AWS Lakehouse Compute Cost &amp; Evolution Simulator (Glue 6.0 vs. EMR Serverless, EC2 &amp; EKS)</title>
+  <script src="https://cdn.tailwindcss.com/3.4.17"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <style>
+    html, body {
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background-color: #f8fafc;
+      color: #0f172a;
+    }
+    input[type="range"] {
+      accent-color: #0284c7;
+      cursor: pointer;
+    }
+    .card-surface {
+      background: #ffffff;
+      border: 1px solid #e2e8f0;
+      border-radius: 14px;
+      box-shadow: 0 4px 18px rgba(15, 23, 42, 0.05);
+    }
+    .stage-pill-active {
+      background: #0f172a;
+      color: #ffffff;
+      border-color: #0f172a;
+    }
+  </style>
+</head>
+<body class="min-h-screen bg-slate-50 text-slate-900">
+
+  <!-- Top Header -->
+  <header class="bg-slate-900 text-white border-b border-slate-800 sticky top-0 z-30">
+    <div class="max-w-7xl mx-auto px-4 sm:px-6 py-3.5 flex flex-wrap items-center justify-between gap-3">
+      <div class="flex items-center gap-3">
+        <div class="w-9 h-9 rounded-lg bg-gradient-to-br from-sky-500 to-emerald-500 flex items-center justify-center font-extrabold text-slate-950 text-sm shadow">
+          AWS
+        </div>
+        <div>
+          <h1 class="text-base sm:text-lg font-extrabold tracking-tight">AWS Lakehouse Compute Cost &amp; Evolution Simulator</h1>
+          <p class="text-[11px] sm:text-xs text-slate-400">Live monthly cost model: AWS Glue 6.0 &rarr; EMR Serverless (On-Demand &amp; Pre-Warmed) &rarr; EMR on EC2 &rarr; EMR on EKS</p>
+        </div>
+      </div>
+      <div class="flex items-center gap-2">
+        <button type="button" id="preset-startup" class="px-2.5 py-1.5 text-xs font-semibold rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 transition-colors">
+          Preset: Light (15 jobs / 2hr)
+        </button>
+        <button type="button" id="preset-current" class="px-2.5 py-1.5 text-xs font-semibold rounded-lg bg-sky-600 hover:bg-sky-500 text-white transition-colors">
+          Preset: Multi-Tenant (50 jobs / 15m)
+        </button>
+        <button type="button" id="preset-scale" class="px-2.5 py-1.5 text-xs font-semibold rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 transition-colors">
+          Preset: High Scale (250 jobs / 15m)
+        </button>
+      </div>
+    </div>
+  </header>
+
+  <main class="max-w-7xl mx-auto px-4 sm:px-6 py-6 space-y-6">
+
+    <!-- Top KPI & Live Recommendation Strip -->
+    <section class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+      <div class="card-surface p-4 border-l-4 border-emerald-500">
+        <div class="text-[11px] font-bold uppercase tracking-wider text-slate-500">Lowest-Cost Option (Current Inputs)</div>
+        <div id="kpi-winner" class="text-lg font-extrabold text-emerald-700 mt-1">EMR Serverless</div>
+        <div id="kpi-winner-cost" class="text-xs text-slate-600 mt-0.5">$0 / month</div>
+      </div>
+      <div class="card-surface p-4 border-l-4 border-sky-500">
+        <div class="text-[11px] font-bold uppercase tracking-wider text-slate-500">Total Monthly Job Runs</div>
+        <div id="kpi-runs" class="text-lg font-extrabold text-slate-900 mt-1 font-mono">144,000</div>
+        <div id="kpi-runtime" class="text-xs text-slate-600 mt-0.5">Est. active Spark time: 1.5 min/run</div>
+      </div>
+      <div class="card-surface p-4 border-l-4 border-amber-500">
+        <div class="text-[11px] font-bold uppercase tracking-wider text-slate-500">Est. Peak Concurrent Jobs</div>
+        <div id="kpi-concurrent" class="text-lg font-extrabold text-slate-900 mt-1 font-mono">10 jobs</div>
+        <div id="kpi-vcpu" class="text-xs text-slate-600 mt-0.5">Peak demand: 50 vCPU / 200 GB</div>
+      </div>
+      <div class="card-surface p-4 border-l-4 border-indigo-500">
+        <div class="text-[11px] font-bold uppercase tracking-wider text-slate-500">Savings vs. AWS Glue 6.0</div>
+        <div id="kpi-savings" class="text-lg font-extrabold text-indigo-700 mt-1 font-mono">$0 / mo</div>
+        <div id="kpi-savings-pct" class="text-xs text-slate-600 mt-0.5">0% savings at current profile</div>
+      </div>
+    </section>
+
+    <!-- Main Interactive Grid: Controls (Left) + Live Charts (Right) -->
+    <section class="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
+
+      <!-- Left Column: Workload & Cluster Controls -->
+      <div class="lg:col-span-4 space-y-5">
+
+        <!-- Workload Parameters -->
+        <div class="card-surface p-5 space-y-4">
+          <div class="flex items-center justify-between">
+            <h2 class="text-sm font-extrabold uppercase tracking-wide text-slate-800">1. Workload Parameters</h2>
+            <span class="text-[11px] font-semibold px-2 py-0.5 rounded bg-sky-50 text-sky-700 border border-sky-200">US East List Rates</span>
+          </div>
+
+          <!-- Number of Jobs -->
+          <div>
+            <div class="flex justify-between text-xs font-semibold text-slate-700 mb-1">
+              <label for="sl-jobs">Active Jobs / Tenants per Cycle</label>
+              <span id="val-jobs" class="font-mono font-extrabold text-sky-700">50 jobs</span>
+            </div>
+            <input type="range" id="sl-jobs" min="1" max="500" step="1" value="50" class="w-full" />
+            <div class="flex justify-between text-[10px] text-slate-400"><span>1</span><span>100</span><span>250</span><span>500</span></div>
+          </div>
+
+          <!-- Average Records per Run -->
+          <div>
+            <div class="flex justify-between text-xs font-semibold text-slate-700 mb-1">
+              <label for="sl-records">Avg. Records per Job Run</label>
+              <span id="val-records" class="font-mono font-extrabold text-sky-700">25,000</span>
+            </div>
+            <input type="range" id="sl-records" min="1" max="100" step="1" value="25" class="w-full" />
+            <div class="flex justify-between text-[10px] text-slate-400"><span>1K</span><span>25K</span><span>250K</span><span>2M</span></div>
+          </div>
+
+          <!-- Run Frequency -->
+          <div>
+            <label for="sel-freq" class="block text-xs font-semibold text-slate-700 mb-1">Run Frequency</label>
+            <select id="sel-freq" class="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-semibold text-slate-800 focus:outline-none focus:ring-2 focus:ring-sky-500">
+              <option value="15" selected>Every 15 minutes (96 runs/day per job)</option>
+              <option value="30">Every 30 minutes (48 runs/day per job)</option>
+              <option value="60">Hourly (24 runs/day per job)</option>
+              <option value="120">Every 2 hours (12 runs/day per job)</option>
+              <option value="360">Every 6 hours (4 runs/day per job)</option>
+              <option value="1440">Daily (1 run/day per job)</option>
+            </select>
+          </div>
+
+          <!-- Payload Complexity -->
+          <div>
+            <label for="sel-payload" class="block text-xs font-semibold text-slate-700 mb-1">Record Payload Profile</label>
+            <select id="sel-payload" class="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-semibold text-slate-800 focus:outline-none focus:ring-2 focus:ring-sky-500">
+              <option value="1.0">Standard Structured (CSV / Parquet / Forms)</option>
+              <option value="1.75" selected>Nested / Fat DynamoDB JSON (Heavy Flatten)</option>
+            </select>
+          </div>
+
+          <!-- Execution Class (Standard vs Flex) -->
+          <div>
+            <label for="sel-exec-mode" class="block text-xs font-semibold text-slate-700 mb-1">Serverless Execution Mode (Glue 6.0 &amp; EMR Serverless)</label>
+            <select id="sel-exec-mode" class="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-semibold text-slate-800 focus:outline-none focus:ring-2 focus:ring-sky-500">
+              <option value="standard" selected>Standard SLA (Glue 6.0 $0.308/DPU-hr • EMR-S Standard)</option>
+              <option value="flex">Flex / Non-SLA Batch (Glue 6.0 $0.203/DPU-hr • EMR-S Flex -60%)</option>
+            </select>
+          </div>
+        </div>
+
+        <!-- EMR Serverless "Cluster" & EC2/EKS Sizing -->
+        <div class="card-surface p-5 space-y-4">
+          <h2 class="text-sm font-extrabold uppercase tracking-wide text-slate-800">2. EMR Serverless Pool &amp; EC2/EKS Options</h2>
+
+          <!-- Driver + Executor Size -->
+          <div class="grid grid-cols-2 gap-3">
+            <div>
+              <label for="sel-driver" class="block text-[11px] font-semibold text-slate-700 mb-1">EMR-S Driver</label>
+              <select id="sel-driver" class="w-full rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-xs font-semibold text-slate-800">
+                <option value="1-4" selected>1 vCPU / 4 GB</option>
+                <option value="2-8">2 vCPU / 8 GB</option>
+                <option value="4-16">4 vCPU / 16 GB</option>
+              </select>
+            </div>
+            <div>
+              <label for="sel-exec-size" class="block text-[11px] font-semibold text-slate-700 mb-1">Executor Worker Size</label>
+              <select id="sel-exec-size" class="w-full rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-xs font-semibold text-slate-800">
+                <option value="2-8" selected>2 vCPU / 8 GB</option>
+                <option value="4-16">4 vCPU / 16 GB</option>
+              </select>
+            </div>
+          </div>
+
+          <!-- Executors per Job -->
+          <div>
+            <div class="flex justify-between text-xs font-semibold text-slate-700 mb-1">
+              <label for="sl-exec-count">Executors per Job Run</label>
+              <span id="val-exec-count" class="font-mono font-extrabold text-emerald-700">2 executors</span>
+            </div>
+            <input type="range" id="sl-exec-count" min="1" max="8" step="1" value="2" class="w-full" />
+          </div>
+
+          <!-- Pre-initialized Warm Pool -->
+          <div>
+            <div class="flex justify-between text-xs font-semibold text-slate-700 mb-1">
+              <label for="sl-warm-pool">Pre-Initialized Warm Workers</label>
+              <span id="val-warm-pool" class="font-mono font-extrabold text-amber-600">15 workers</span>
+            </div>
+            <input type="range" id="sl-warm-pool" min="0" max="60" step="1" value="15" class="w-full" />
+            <p class="text-[10.5px] text-slate-500 mt-1">Eliminates cold starts for frequent 15-min runs; idle warm workers bill while waiting.</p>
+          </div>
+
+          <!-- EC2/EKS Purchase Model -->
+          <div>
+            <label for="sel-ec2-plan" class="block text-xs font-semibold text-slate-700 mb-1">EMR on EC2 / EKS Pricing Model</label>
+            <select id="sel-ec2-plan" class="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-semibold text-slate-800">
+              <option value="0">On-Demand EC2 (0% discount)</option>
+              <option value="0.35" selected>1-Yr Compute Savings Plan (~35% off EC2)</option>
+              <option value="0.60">Spot / Mixed Task Fleet (~60% off EC2)</option>
+            </select>
+          </div>
+        </div>
+      </div>
+
+      <!-- Right Column: Live Charts + Breakdown Table -->
+      <div class="lg:col-span-8 space-y-6">
+
+        <!-- Chart 1: Monthly Cost Bar Chart -->
+        <div class="card-surface p-5">
+          <div class="flex flex-wrap items-center justify-between gap-2 mb-3">
+            <div>
+              <h2 class="text-sm sm:text-base font-extrabold text-slate-900">Estimated Monthly Cost by Compute Stage (USD / Month)</h2>
+              <p class="text-xs text-slate-500">Updates immediately as you change job count, average records, frequency, or EMR Serverless pool sizing.</p>
+            </div>
+            <span id="badge-recommendation" class="px-3 py-1 rounded-full text-xs font-extrabold bg-emerald-100 text-emerald-800 border border-emerald-300">
+              Recommended: EMR Serverless
+            </span>
+          </div>
+          <div class="relative h-72 w-full">
+            <canvas id="barCostChart"></canvas>
+          </div>
+        </div>
+
+        <!-- Chart 2: Scaling Crossover Curve -->
+        <div class="card-surface p-5">
+          <div class="flex flex-wrap items-center justify-between gap-2 mb-3">
+            <div>
+              <h2 class="text-sm sm:text-base font-extrabold text-slate-900">Evolution Crossover Curve: Cost vs. Number of Jobs</h2>
+              <p class="text-xs text-slate-500">Shows how monthly cost scales from 10 to 500 jobs at your current record volume &amp; run frequency.</p>
+            </div>
+            <span class="text-[11px] font-mono text-slate-500" id="curve-subtitle">Current marker: 50 jobs</span>
+          </div>
+          <div class="relative h-72 w-full">
+            <canvas id="lineScaleChart"></canvas>
+          </div>
+        </div>
+
+        <!-- Live Comparison Matrix -->
+        <div class="card-surface p-5">
+          <h2 class="text-sm sm:text-base font-extrabold text-slate-900 mb-3">Side-by-Side Monthly Cost &amp; Operational Fit</h2>
+          <div class="overflow-x-auto">
+            <table class="w-full text-left border-collapse text-xs">
+              <thead class="bg-slate-100 text-slate-600 uppercase text-[10.5px]">
+                <tr>
+                  <th class="px-3 py-2.5 font-bold">Compute Evolution Stage</th>
+                  <th class="px-3 py-2.5 font-bold">Sized Capacity</th>
+                  <th class="px-3 py-2.5 font-bold">Cold Start / SLA</th>
+                  <th class="px-3 py-2.5 font-bold text-right">Est. Monthly Cost</th>
+                  <th class="px-3 py-2.5 font-bold text-right">Est. Annual Cost</th>
+                </tr>
+              </thead>
+              <tbody id="costTableBody" class="divide-y divide-slate-200"></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- What Is an EMR Serverless "Cluster"? Visual Anatomy -->
+    <section class="card-surface p-6">
+      <div class="flex flex-wrap items-center justify-between gap-2 mb-4">
+        <div>
+          <span class="inline-block text-[10px] font-bold uppercase tracking-wider px-2.5 py-0.5 rounded bg-emerald-100 text-emerald-800 mb-1">Architecture Definition</span>
+          <h2 class="text-base sm:text-lg font-extrabold text-slate-900">What Is an EMR Serverless "Cluster"? (Application Pool Anatomy)</h2>
+          <p class="text-xs sm:text-sm text-slate-600 mt-0.5">Unlike EMR on EC2, EMR Serverless has no static EC2 cluster to manage. Its "cluster" is a logical <strong>Application</strong> acting as an elastic capacity pool that carves out isolated Spark drivers and executors per job run.</p>
+        </div>
+      </div>
+
+      <div class="grid grid-cols-1 lg:grid-cols-12 gap-5 items-center">
+        <!-- SVG Diagram of EMR Serverless Application Pool -->
+        <div class="lg:col-span-7 bg-slate-950 rounded-xl p-4 border border-slate-800 overflow-x-auto">
+          <svg viewBox="0 0 680 250" class="w-full min-w-[540px] h-auto" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="EMR Serverless Application Pool Anatomy">
+            <rect x="8" y="8" width="664" height="234" rx="12" fill="#0f172a" stroke="#38bdf8" stroke-width="1.8" stroke-dasharray="6 4"/>
+            <text x="22" y="30" fill="#38bdf8" font-size="11" font-weight="800" letter-spacing="0.06em">EMR SERVERLESS APPLICATION (LOGICAL CAPACITY POOL • MAX CAP)</text>
+
+            <!-- Pre-Initialized Warm Pool -->
+            <rect x="22" y="46" width="210" height="178" rx="10" fill="#231c0d" stroke="#f59e0b" stroke-width="1.8"/>
+            <text x="127" y="68" text-anchor="middle" fill="#fbbf24" font-size="10.5" font-weight="800">PRE-INITIALIZED WARM POOL</text>
+            <text id="svg-warm-label" x="127" y="86" text-anchor="middle" fill="#fde68a" font-size="10">15 Warm Workers Ready</text>
+            <rect x="38" y="100" width="178" height="32" rx="6" fill="#3b2f13" stroke="#d97706"/>
+            <text x="127" y="120" text-anchor="middle" fill="#fef3c7" font-size="10" font-weight="700">Zero Cold Start (&lt;5 sec)</text>
+            <rect x="38" y="142" width="178" height="32" rx="6" fill="#3b2f13" stroke="#d97706"/>
+            <text x="127" y="162" text-anchor="middle" fill="#fef3c7" font-size="10" font-weight="700">Auto-Stops When Idle</text>
+            <text x="127" y="198" text-anchor="middle" fill="#cbd5e1" font-size="9.2">Optional: set to 0 for $0 idle</text>
+            <text x="127" y="211" text-anchor="middle" fill="#cbd5e1" font-size="9.2">cost on infrequent workloads</text>
+
+            <!-- Arrow -->
+            <line x1="234" y1="135" x2="266" y2="135" stroke="#34d399" stroke-width="2.4"/>
+            <polygon points="266,130 276,135 266,140" fill="#34d399"/>
+
+            <!-- Isolated Per-Tenant Job Runs -->
+            <rect x="280" y="46" width="376" height="178" rx="10" fill="#0d2420" stroke="#10b981" stroke-width="1.8"/>
+            <text x="468" y="68" text-anchor="middle" fill="#34d399" font-size="10.5" font-weight="800">ISOLATED SPARK JOB RUNS (StartJobRun PER TENANT)</text>
+
+            <!-- Job Run 1 -->
+            <rect x="296" y="82" width="344" height="56" rx="8" fill="#11332c" stroke="#34d399" stroke-width="1.2"/>
+            <text x="310" y="102" fill="#ffffff" font-size="11" font-weight="700">Tenant A Job Run (Scoped IAM Role)</text>
+            <text id="svg-job-spec" x="310" y="120" fill="#a7f3d0" font-size="9.8">1 Driver (1 vCPU/4GB) + 2 Executors (2 vCPU/8GB each)</text>
+
+            <!-- Job Run 2 -->
+            <rect x="296" y="148" width="344" height="56" rx="8" fill="#11332c" stroke="#34d399" stroke-width="1.2"/>
+            <text x="310" y="168" fill="#ffffff" font-size="11" font-weight="700">Tenant B Job Run (Scoped IAM Role)</text>
+            <text x="310" y="186" fill="#a7f3d0" font-size="9.8">Independent Driver + Executors • Zero Cross-Tenant Memory</text>
+          </svg>
+        </div>
+
+        <!-- 4 Crisp Definition Cards -->
+        <div class="lg:col-span-5 grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
+          <div class="p-3.5 rounded-xl bg-slate-50 border border-slate-200">
+            <div class="font-extrabold text-slate-900 mb-1">1. Application = Capacity Pool</div>
+            <p class="text-slate-600">Defines Spark version, architecture (x86/Graviton), VPC, and maximum vCPU/memory ceiling. Costs $0 when stopped with no warm pool.</p>
+          </div>
+          <div class="p-3.5 rounded-xl bg-slate-50 border border-slate-200">
+            <div class="font-extrabold text-slate-900 mb-1">2. Per-Job Micro-Cluster</div>
+            <p class="text-slate-600">Each <code>StartJobRun</code> dynamically acquires its own isolated Spark Driver + Executors, billed per second (1-min min) and released immediately after.</p>
+          </div>
+          <div class="p-3.5 rounded-xl bg-amber-50 border border-amber-200">
+            <div class="font-extrabold text-amber-900 mb-1">3. Pre-Initialized Warm Pool</div>
+            <p class="text-slate-700">Optional pool of ready workers kept warm so 15-minute SLA jobs launch in seconds instead of waiting 1–2 min for cold starts.</p>
+          </div>
+          <div class="p-3.5 rounded-xl bg-emerald-50 border border-emerald-200">
+            <div class="font-extrabold text-emerald-900 mb-1">4. Evolution Without Rewrites</div>
+            <p class="text-slate-700">Start with 1 Shared App &rarr; split into Per-Source Apps (Producer Spokes) &rarr; graduate flat 24/7 pipelines to EMR on EC2 or EKS.</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Unit Economics Table & High-Frequency Small-Job Cost Analysis -->
+    <section class="card-surface p-6 space-y-5">
+      <div class="flex flex-wrap items-center justify-between gap-2">
+        <div>
+          <span class="inline-block text-[10px] font-bold uppercase tracking-wider px-2.5 py-0.5 rounded bg-sky-100 text-sky-800 mb-1">Underlying Model Basis</span>
+          <h2 class="text-base sm:text-lg font-extrabold text-slate-900">AWS Official Unit Economics (Basis of the Graphs Above)</h2>
+          <p class="text-xs sm:text-sm text-slate-600 mt-0.5">US East (<code>us-east-1</code>) published list rates used in the simulator, normalized to a <strong>4 vCPU / 16 GB</strong> equivalent compute unit for apples-to-apples comparison.</p>
+        </div>
+      </div>
+
+      <div class="overflow-x-auto rounded-xl border border-slate-200">
+        <table class="w-full text-left border-collapse text-xs">
+          <thead class="bg-slate-100 text-slate-700 uppercase text-[10.5px]">
+            <tr>
+              <th class="px-3 py-2.5 font-bold">Compute Engine</th>
+              <th class="px-3 py-2.5 font-bold">Billing Unit &amp; Minimums</th>
+              <th class="px-3 py-2.5 font-bold">Published Unit Rate (USD)</th>
+              <th class="px-3 py-2.5 font-bold">4 vCPU / 16 GB Equiv. Rate</th>
+              <th class="px-3 py-2.5 font-bold">Key Economic Driver</th>
+            </tr>
+          </thead>
+          <tbody class="divide-y divide-slate-200">
+            <tr class="bg-amber-50/40">
+              <td class="px-3 py-3 font-extrabold text-slate-900">
+                AWS Glue 6.0<br/>
+                <span class="text-[10px] font-semibold text-amber-800">Standard / Flex</span>
+              </td>
+              <td class="px-3 py-3 text-slate-700">
+                <strong>DPU-hour</strong> (1 DPU = 4 vCPU, 16 GB)<br/>
+                <span class="text-rose-700 font-semibold">Min 2 DPUs (8 vCPU / 32 GB)</span> • 1-min floor
+              </td>
+              <td class="px-3 py-3 font-mono text-slate-800">
+                <strong>$0.308</strong> / DPU-hr (Std)<br/>
+                <strong>$0.203</strong> / DPU-hr (Flex)<br/>
+                <span class="text-[10px] text-slate-500">(vs. $0.44 on Glue 5.1)</span>
+              </td>
+              <td class="px-3 py-3 font-mono text-slate-900">
+                <strong>$0.308/hr</strong> per DPU<br/>
+                <span class="text-rose-700 font-bold">$0.616/hr min job floor</span>
+              </td>
+              <td class="px-3 py-3 text-slate-600">
+                2-DPU minimum + 1–2 min startup overhead per run penalizes frequent small jobs.
+                <a class="text-sky-700 underline block mt-1" href="https://aws.amazon.com/blogs/big-data/introducing-aws-glue-6-0-for-apache-spark/" target="_blank" rel="noopener">AWS Glue 6.0 Docs &nearr;</a>
+              </td>
+            </tr>
+            <tr class="bg-emerald-50/50">
+              <td class="px-3 py-3 font-extrabold text-emerald-950">
+                Amazon EMR Serverless<br/>
+                <span class="text-[10px] font-semibold text-emerald-700">Standard / Flex (x86)</span>
+              </td>
+              <td class="px-3 py-3 text-slate-700">
+                <strong>vCPU-hr + GB-hr</strong> (+ storage &gt;20 GB free)<br/>
+                <span class="text-emerald-700 font-semibold">Granular: down to 1 vCPU / 2 GB</span> • 1-min floor
+              </td>
+              <td class="px-3 py-3 font-mono text-slate-800">
+                <strong>$0.052624</strong> / vCPU-hr<br/>
+                <strong>$0.0057785</strong> / GB-hr<br/>
+                <span class="text-[10px] text-emerald-700">Flex (-60%): $0.02105 / $0.00231</span>
+              </td>
+              <td class="px-3 py-3 font-mono text-emerald-950">
+                <strong>$0.303/hr</strong> (4 vCPU/16 GB)<br/>
+                <span class="text-emerald-700 font-bold">~$0.227/hr</span> (3 vCPU/12 GB small job)
+              </td>
+              <td class="px-3 py-3 text-slate-700">
+                No 2-DPU floor; scales to zero when idle; optional pre-warmed pool removes cold starts.
+                <a class="text-sky-700 underline block mt-1" href="https://aws.amazon.com/emr/pricing/" target="_blank" rel="noopener">Amazon EMR Pricing &nearr;</a>
+              </td>
+            </tr>
+            <tr class="bg-white">
+              <td class="px-3 py-3 font-extrabold text-slate-900">
+                Amazon EMR on EC2<br/>
+                <span class="text-[10px] font-semibold text-indigo-700">Persistent (m5.xlarge)</span>
+              </td>
+              <td class="px-3 py-3 text-slate-700">
+                <strong>EC2 instance-hr + EMR uplift-hr</strong><br/>
+                Per-second billing while cluster is up (24/7)
+              </td>
+              <td class="px-3 py-3 font-mono text-slate-800">
+                <strong>$0.192/hr</strong> EC2 On-Demand<br/>
+                <strong>+$0.048/hr</strong> EMR uplift<br/>
+                <span class="text-[10px] text-slate-500">SP (-35%) / Spot (-60%) cut EC2</span>
+              </td>
+              <td class="px-3 py-3 font-mono text-slate-900">
+                <strong>$0.240/hr</strong> On-Demand<br/>
+                <strong>~$0.173/hr</strong> w/ 1-Yr SP
+              </td>
+              <td class="px-3 py-3 text-slate-600">
+                Lowest steady 24/7 unit cost with Savings Plans/Spot, but idle hours still bill full node + uplift.
+                <a class="text-sky-700 underline block mt-1" href="https://www.onehouse.ai/blog/amazon-emr-pricing" target="_blank" rel="noopener">EMR EC2 Pricing &nearr;</a>
+              </td>
+            </tr>
+            <tr class="bg-white">
+              <td class="px-3 py-3 font-extrabold text-slate-900">
+                Amazon EMR on EKS<br/>
+                <span class="text-[10px] font-semibold text-teal-700">Virtual Cluster (K8s)</span>
+              </td>
+              <td class="px-3 py-3 text-slate-700">
+                <strong>EKS cluster + EC2 nodes + Pod uplift</strong><br/>
+                EMR uplift billed only while Spark pods run
+              </td>
+              <td class="px-3 py-3 font-mono text-slate-800">
+                <strong>$0.007084</strong> / vCPU-hr uplift<br/>
+                <strong>$0.000777875</strong> / GB-hr uplift<br/>
+                <strong>+$0.10/hr</strong> EKS cluster + EC2
+              </td>
+              <td class="px-3 py-3 font-mono text-slate-900">
+                <strong>$0.041/hr</strong> EMR uplift<br/>
+                <strong>~$0.166/hr</strong> w/ 1-Yr SP EC2<br/>
+                <span class="text-[10px] text-slate-500">(+ $73/mo shared EKS)</span>
+              </td>
+              <td class="px-3 py-3 text-slate-600">
+                Oct 2026 30% EMR uplift cut + K8s pod bin-packing; best if unifying Spark on K8s across hybrid.
+                <a class="text-sky-700 underline block mt-1" href="https://aws.amazon.com/about-aws/whats-new/2026/10/emr-eks-reduces-emr-charge-30-percent/" target="_blank" rel="noopener">AWS Oct 2026 Cut &nearr;</a>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <!-- Highlight Box: Why Glue Becomes Costlier for Many Small, Frequent Jobs -->
+      <div class="rounded-xl bg-gradient-to-r from-amber-50 via-orange-50/70 to-emerald-50 border-2 border-amber-300 p-4 sm:p-5">
+        <div class="flex flex-wrap items-center gap-2 mb-2">
+          <span class="px-2.5 py-0.5 rounded-full text-[10.5px] font-extrabold bg-amber-600 text-white uppercase tracking-wide">Key Cost Takeaway</span>
+          <h3 class="text-sm sm:text-base font-extrabold text-slate-900">Why AWS Glue 6.0 Becomes Costlier Than EMR Serverless When Running Many Small, Frequent Jobs</h3>
+        </div>
+        <p class="text-xs text-slate-700 mb-3">
+          Even after AWS Glue 6.0's 30% price reduction ($0.308/DPU-hr vs. $0.44 on Glue 5.1), <strong>high-frequency, low-record multi-tenant workloads</strong> (e.g., 50–250 tenants running every 15 minutes with &lt;50K records per run) cause Glue costs to climb much faster than EMR Serverless for three structural reasons:
+        </p>
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-3 text-xs">
+          <div class="bg-white/90 rounded-lg p-3.5 border border-amber-200">
+            <div class="font-extrabold text-amber-900 mb-1">1. Rigid 2-DPU Minimum Floor</div>
+            <p class="text-slate-700">Every Glue Spark job must allocate at least <strong>2 DPUs (8 vCPU / 32 GB = $0.616/hr)</strong>, even if a small tenant only needs 10K records transformed. EMR Serverless right-sizes down to a <strong>1 vCPU / 4 GB driver + small executors</strong> (~$0.23–$0.38/hr), cutting wasted capacity immediately.</p>
+          </div>
+          <div class="bg-white/90 rounded-lg p-3.5 border border-amber-200">
+            <div class="font-extrabold text-amber-900 mb-1">2. Cold-Start Overhead × High Run Frequency</div>
+            <p class="text-slate-700">At 50 jobs every 15 minutes (<strong>144,000 runs/month</strong>), paying <strong>1–2 minutes of Glue startup/provisioning</strong> on a 30-second job means 65–80% of your Glue bill goes to waiting for workers. EMR Serverless pre-warmed pools start in <strong>&lt;5 seconds</strong>, so you pay almost purely for real Spark work.</p>
+          </div>
+          <div class="bg-white/90 rounded-lg p-3.5 border border-emerald-200">
+            <div class="font-extrabold text-emerald-900 mb-1">3. Shared Pool + No Account Job Caps</div>
+            <p class="text-slate-700">EMR Serverless packs many short tenant runs sequentially through a shared warm pool (preserving per-tenant Spark driver isolation) without hitting Glue's account concurrency ceilings—and when flat 24/7 volume matures further, <strong>EMR on EC2/EKS</strong> lowers unit cost even further with Savings Plans or Spot.</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Grounded Pricing Assumptions & Sources Footer -->
+    <footer class="card-surface p-4 text-[11.5px] text-slate-600 space-y-1.5">
+      <div class="font-bold text-slate-800">Verified AWS US East (us-east-1) List Pricing Assumptions (Updated Nov 2026)</div>
+      <p>
+        &bull; <strong>AWS Glue 6.0:</strong> $0.308/DPU-hr Standard ($0.203/DPU-hr Flex; 1 DPU = 4 vCPU / 16 GB; 2-DPU floor; 1-min billing min) &mdash;
+        <a class="text-sky-700 underline" href="https://aws.amazon.com/blogs/big-data/introducing-aws-glue-6-0-for-apache-spark/" target="_blank" rel="noopener">AWS Glue 6.0 Launch</a>,
+        <a class="text-sky-700 underline" href="https://www.cloudroutehq.com/aws/glue-pricing" target="_blank" rel="noopener">AWS Price List (Nov 2026)</a>,
+        <a class="text-sky-700 underline" href="https://www.eon.io/blog/aws-glue-pricing" target="_blank" rel="noopener">Eon Glue Pricing</a>.<br/>
+        &bull; <strong>Amazon EMR Serverless (x86):</strong> $0.052624/vCPU-hr + $0.0057785/GB-hr Standard ($0.0210496/vCPU-hr + $0.0023114/GB-hr Flex executors; 20 GB free ephemeral storage/worker) &mdash;
+        <a class="text-sky-700 underline" href="https://aws.amazon.com/emr/pricing/" target="_blank" rel="noopener">Amazon EMR Pricing</a>,
+        <a class="text-sky-700 underline" href="https://www.onehouse.ai/blog/amazon-emr-pricing" target="_blank" rel="noopener">Onehouse EMR Pricing</a>.<br/>
+        &bull; <strong>Amazon EMR on EC2 &amp; EMR on EKS:</strong> EC2 <code>m5.xlarge</code> (4 vCPU/16 GB) at $0.192/hr + $0.048/hr EMR EC2 uplift; EMR on EKS uplift at $0.007084/vCPU-hr + $0.000777875/GB-hr (post-Oct 2026 30% reduction) + $0.10/hr EKS cluster &mdash;
+        <a class="text-sky-700 underline" href="https://aws.amazon.com/about-aws/whats-new/2026/10/emr-eks-reduces-emr-charge-30-percent/" target="_blank" rel="noopener">AWS What's New (Oct 2026)</a>,
+        <a class="text-sky-700 underline" href="https://datapace.ai/blog/emr-on-eks-pricing" target="_blank" rel="noopener">Datapace EMR on EKS</a>.
+      </p>
+    </footer>
+  </main>
+
+  <script>
+    (function () {
+      // Verified US East (us-east-1) list rates
+      const RATES = {
+        glue6Std: 0.308,
+        glue6Flex: 0.203,
+        emrsVcpuStd: 0.052624,
+        emrsGbStd: 0.0057785,
+        emrsVcpuFlex: 0.0210496,
+        emrsGbFlex: 0.0023114,
+        ec2M5xl: 0.192,
+        emrEc2UpliftM5xl: 0.048,
+        eksClusterHr: 0.10,
+        emrEksVcpu: 0.007084,
+        emrEksGb: 0.000777875
+      };
+
+      // Map slider 1..100 logarithmically to 1,000 .. 2,000,000 records
+      function sliderToRecords(val) {
+        const minLog = Math.log10(1000);
+        const maxLog = Math.log10(2000000);
+        const raw = Math.pow(10, minLog + ((val - 1) / 99) * (maxLog - minLog));
+        if (raw < 10000) return Math.round(raw / 500) * 500;
+        if (raw < 100000) return Math.round(raw / 1000) * 1000;
+        return Math.round(raw / 10000) * 10000;
+      }
+
+      function parseSize(str) {
+        const parts = str.split('-').map(Number);
+        return { vcpu: parts[0], gb: parts[1] };
+      }
+
+      function formatUSD(n) {
+        return '$' + Math.round(n).toLocaleString('en-US');
+      }
+
+      function formatNum(n) {
+        return Math.round(n).toLocaleString('en-US');
+      }
+
+      // Core deterministic cost calculation for any jobCount
+      function computeScenario(jobs, records, freqMin, payloadFactor, execMode, driver, execSize, execCount, warmWorkers, ec2Discount) {
+        const runsPerDayPerJob = 1440 / freqMin;
+        const monthlyRuns = jobs * runsPerDayPerJob * 30;
+
+        // Estimate active Spark processing minutes per run based on records & payload complexity
+        const totalExecVcpu = execCount * execSize.vcpu;
+        const baseWorkMin = (records / 25000) * 0.85 * payloadFactor * (4 / Math.max(2, totalExecVcpu));
+        const activeComputeMin = Math.max(0.55, Math.min(45, 0.45 + baseWorkMin));
+
+        const totalJobVcpu = driver.vcpu + totalExecVcpu;
+        const totalJobGb = driver.gb + execCount * execSize.gb;
+
+        // Peak concurrent jobs in a single scheduling window (assuming 80% burst overlap)
+        const peakConcurrentJobs = Math.max(1, Math.ceil((jobs * 0.8) * Math.min(1, (activeComputeMin + 0.5) / freqMin)));
+        const peakConcurrentVcpu = peakConcurrentJobs * totalJobVcpu;
+
+        // 1. AWS Glue 6.0 (2 DPU minimum, 1 DPU = 4 vCPU/16GB, ~1.0 min startup overhead, 1-min billing min)
+        const glueDPUs = Math.max(2, Math.ceil(totalJobVcpu / 4));
+        const glueBilledMin = Math.max(1, activeComputeMin + 1.0);
+        const glueRate = execMode === 'flex' ? RATES.glue6Flex : RATES.glue6Std;
+        const glueMonthly = monthlyRuns * glueDPUs * (glueBilledMin / 60) * glueRate;
+
+        // 2. EMR Serverless (On-Demand / Scale-to-Zero, ~0.35 min cold acquisition)
+        const emrsOnDemandMin = Math.max(1, activeComputeMin + 0.35);
+        const driverHrRate = driver.vcpu * RATES.emrsVcpuStd + driver.gb * RATES.emrsGbStd;
+        const execVcpuRate = execMode === 'flex' ? RATES.emrsVcpuFlex : RATES.emrsVcpuStd;
+        const execGbRate = execMode === 'flex' ? RATES.emrsGbFlex : RATES.emrsGbStd;
+        const execHrRate = execCount * (execSize.vcpu * execVcpuRate + execSize.gb * execGbRate);
+        const emrsOnDemandMonthly = monthlyRuns * (emrsOnDemandMin / 60) * (driverHrRate + execHrRate);
+
+        // 3. EMR Serverless (Pre-Initialized Warm Pool — zero cold start)
+        const emrsWarmActiveMin = Math.max(1, activeComputeMin);
+        const emrsActiveCompute = monthlyRuns * (emrsWarmActiveMin / 60) * (driverHrRate + execHrRate);
+        const totalActiveWorkerHrs = monthlyRuns * (emrsWarmActiveMin / 60) * (1 + execCount);
+        const warmPoolCapacityHrs = 730 * warmWorkers;
+        const idleWarmWorkerHrs = Math.max(0, warmPoolCapacityHrs - Math.min(warmPoolCapacityHrs, totalActiveWorkerHrs));
+        const singleWarmWorkerHrRate = execSize.vcpu * RATES.emrsVcpuStd + execSize.gb * RATES.emrsGbStd;
+        const emrsWarmMonthly = emrsActiveCompute + (idleWarmWorkerHrs * singleWarmWorkerHrRate);
+
+        // 4. EMR on EC2 (Persistent Cluster sized for peak concurrent vCPUs: 1 primary + core/task nodes of m5.xlarge)
+        const ec2Nodes = Math.max(2, 1 + Math.ceil(peakConcurrentVcpu / 4));
+        const ec2NodeHrRate = RATES.ec2M5xl * (1 - ec2Discount) + RATES.emrEc2UpliftM5xl;
+        const ec2Monthly = 730 * ec2Nodes * ec2NodeHrRate;
+
+        // 5. EMR on EKS (K8s bin-packing ~15% tighter nodes + EKS $0.10/hr + Oct-2026 30%-cut pod uplift)
+        const eksNodes = Math.max(2, Math.ceil((peakConcurrentVcpu / 4) * 0.85));
+        const eksControlPlane = 730 * RATES.eksClusterHr;
+        const eksEc2Monthly = 730 * eksNodes * (RATES.ec2M5xl * (1 - ec2Discount));
+        const eksUpliftMonthly = monthlyRuns * (Math.max(1, activeComputeMin) / 60) *
+          (totalJobVcpu * RATES.emrEksVcpu + totalJobGb * RATES.emrEksGb);
+        const eksMonthly = eksControlPlane + eksEc2Monthly + eksUpliftMonthly;
+
+        return {
+          monthlyRuns,
+          activeComputeMin,
+          peakConcurrentJobs,
+          peakConcurrentVcpu,
+          totalJobVcpu,
+          totalJobGb,
+          glueDPUs,
+          ec2Nodes,
+          eksNodes,
+          costs: {
+            glue: glueMonthly,
+            emrsOnDemand: emrsOnDemandMonthly,
+            emrsWarm: emrsWarmMonthly,
+            ec2: ec2Monthly,
+            eks: eksMonthly
+          }
+        };
+      }
+
+      // Initialize Chart.js instances
+      const barCtx = document.getElementById('barCostChart').getContext('2d');
+      const barChart = new Chart(barCtx, {
+        type: 'bar',
+        data: {
+          labels: [
+            'AWS Glue 6.0',
+            'EMR Serverless (On-Demand)',
+            'EMR Serverless (Pre-Warmed)',
+            'EMR on EC2 (Persistent)',
+            'EMR on EKS (K8s)'
+          ],
+          datasets: [{
+            label: 'Estimated Monthly Cost (USD)',
+            data: [0, 0, 0, 0, 0],
+            backgroundColor: ['#f59e0b', '#10b981', '#0284c7', '#6366f1', '#14b8a6'],
+            borderRadius: 8,
+            maxBarThickness: 56
+          }]
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          plugins: {
+            legend: { display: false },
+            tooltip: {
+              callbacks: {
+                label: (ctx) => ' ' + formatUSD(ctx.parsed.y) + ' / month'
+              }
+            }
+          },
+          scales: {
+            y: {
+              beginAtZero: true,
+              ticks: {
+                callback: (v) => '$' + v.toLocaleString('en-US')
+              },
+              grid: { color: '#e2e8f0' }
+            },
+            x: {
+              grid: { display: false }
+            }
+          }
+        }
+      });
+
+      const lineCtx = document.getElementById('lineScaleChart').getContext('2d');
+      const scalePoints = [10, 25, 50, 100, 200, 350, 500];
+      const lineChart = new Chart(lineCtx, {
+        type: 'line',
+        data: {
+          labels: scalePoints.map(n => n + ' jobs'),
+          datasets: [
+            { label: 'AWS Glue 6.0', data: [], borderColor: '#f59e0b', backgroundColor: '#f59e0b', borderWidth: 2.5, tension: 0.25 },
+            { label: 'EMR Serverless (On-Demand)', data: [], borderColor: '#10b981', backgroundColor: '#10b981', borderWidth: 2.8, tension: 0.25 },
+            { label: 'EMR Serverless (Pre-Warmed)', data: [], borderColor: '#0284c7', backgroundColor: '#0284c7', borderWidth: 2.2, borderDash: [5, 4], tension: 0.25 },
+            { label: 'EMR on EC2 (Persistent)', data: [], borderColor: '#6366f1', backgroundColor: '#6366f1', borderWidth: 2.5, tension: 0.25 },
+            { label: 'EMR on EKS (K8s)', data: [], borderColor: '#14b8a6', backgroundColor: '#14b8a6', borderWidth: 2.2, tension: 0.25 }
+          ]
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          interaction: { mode: 'index', intersect: false },
+          plugins: {
+            legend: { position: 'bottom', labels: { boxWidth: 12, font: { size: 11 } } },
+            tooltip: {
+              callbacks: {
+                label: (ctx) => ' ' + ctx.dataset.label + ': ' + formatUSD(ctx.parsed.y) + '/mo'
+              }
+            }
+          },
+          scales: {
+            y: {
+              beginAtZero: true,
+              ticks: { callback: (v) => '$' + v.toLocaleString('en-US') },
+              grid: { color: '#e2e8f0' }
+            },
+            x: { grid: { display: false } }
+          }
+        }
+      });
+
+      function updateAll() {
+        const jobs = Number(document.getElementById('sl-jobs').value);
+        const recSlider = Number(document.getElementById('sl-records').value);
+        const records = sliderToRecords(recSlider);
+        const freqMin = Number(document.getElementById('sel-freq').value);
+        const payloadFactor = Number(document.getElementById('sel-payload').value);
+        const execMode = document.getElementById('sel-exec-mode').value;
+        const driver = parseSize(document.getElementById('sel-driver').value);
+        const execSize = parseSize(document.getElementById('sel-exec-size').value);
+        const execCount = Number(document.getElementById('sl-exec-count').value);
+        const warmWorkers = Number(document.getElementById('sl-warm-pool').value);
+        const ec2Discount = Number(document.getElementById('sel-ec2-plan').value);
+
+        // Update control readouts
+        document.getElementById('val-jobs').textContent = jobs + (jobs === 1 ? ' job' : ' jobs');
+        document.getElementById('val-records').textContent = formatNum(records);
+        document.getElementById('val-exec-count').textContent = execCount + (execCount === 1 ? ' executor' : ' executors');
+        document.getElementById('val-warm-pool').textContent = warmWorkers + ' workers';
+        document.getElementById('curve-subtitle').textContent = 'Current profile: ' + jobs + ' jobs • ' + formatNum(records) + ' recs';
+
+        // Update EMR Serverless SVG labels
+        document.getElementById('svg-warm-label').textContent = warmWorkers + ' Warm Workers Ready';
+        document.getElementById('svg-job-spec').textContent =
+          '1 Driver (' + driver.vcpu + ' vCPU/' + driver.gb + 'GB) + ' + execCount + ' Executors (' + execSize.vcpu + ' vCPU/' + execSize.gb + 'GB each)';
+
+        const res = computeScenario(jobs, records, freqMin, payloadFactor, execMode, driver, execSize, execCount, warmWorkers, ec2Discount);
+        const c = res.costs;
+
+        // Determine lowest cost option
+        const options = [
+          { key: 'glue', name: 'AWS Glue 6.0', cost: c.glue, cap: res.glueDPUs + ' DPUs / job', sla: '1–2 min cold start' },
+          { key: 'emrsOnDemand', name: 'EMR Serverless (On-Demand)', cost: c.emrsOnDemand, cap: res.totalJobVcpu + ' vCPU / ' + res.totalJobGb + ' GB per job', sla: '~20–30s startup • $0 idle' },
+          { key: 'emrsWarm', name: 'EMR Serverless (Pre-Warmed)', cost: c.emrsWarm, cap: warmWorkers + ' warm + burst pool', sla: '<5s instant start (best SLA)' },
+          { key: 'ec2', name: 'EMR on EC2 (Persistent)', cost: c.ec2, cap: res.ec2Nodes + ' × m5.xlarge (24/7)', sla: 'Instant • Cluster ops owned' },
+          { key: 'eks', name: 'EMR on EKS (Virtual Cluster)', cost: c.eks, cap: res.eksNodes + ' × m5.xlarge + EKS', sla: 'Fast on warm nodes • K8s parity' }
+        ];
+
+        const sorted = [...options].sort((a, b) => a.cost - b.cost);
+        const winner = sorted[0];
+
+        // Update KPIs
+        document.getElementById('kpi-winner').textContent = winner.name;
+        document.getElementById('kpi-winner-cost').textContent = formatUSD(winner.cost) + ' / month (' + formatUSD(winner.cost * 12) + ' / yr)';
+        document.getElementById('kpi-runs').textContent = formatNum(res.monthlyRuns);
+        document.getElementById('kpi-runtime').textContent = 'Est. active Spark time: ' + res.activeComputeMin.toFixed(1) + ' min/run';
+        document.getElementById('kpi-concurrent').textContent = res.peakConcurrentJobs + (res.peakConcurrentJobs === 1 ? ' job' : ' jobs');
+        document.getElementById('kpi-vcpu').textContent = 'Peak demand: ' + res.peakConcurrentVcpu + ' vCPU / ' + (res.peakConcurrentJobs * res.totalJobGb) + ' GB';
+
+        const diffVsGlue = c.glue - winner.cost;
+        const pctVsGlue = c.glue > 0 ? Math.round((diffVsGlue / c.glue) * 100) : 0;
+        document.getElementById('kpi-savings').textContent = (diffVsGlue > 0 ? formatUSD(diffVsGlue) : '$0') + ' / mo';
+        document.getElementById('kpi-savings-pct').textContent = diffVsGlue > 0
+          ? pctVsGlue + '% lower than AWS Glue 6.0'
+          : 'Glue 6.0 is currently lowest cost';
+
+        document.getElementById('badge-recommendation').textContent = 'Best Cost Fit: ' + winner.name;
+
+        // Update Bar Chart
+        barChart.data.datasets[0].data = [c.glue, c.emrsOnDemand, c.emrsWarm, c.ec2, c.eks];
+        barChart.update();
+
+        // Update Line Scaling Chart
+        const sGlue = [], sOnDemand = [], sWarm = [], sEc2 = [], sEks = [];
+        scalePoints.forEach(pt => {
+          const pRes = computeScenario(pt, records, freqMin, payloadFactor, execMode, driver, execSize, execCount, warmWorkers, ec2Discount);
+          sGlue.push(pRes.costs.glue);
+          sOnDemand.push(pRes.costs.emrsOnDemand);
+          sWarm.push(pRes.costs.emrsWarm);
+          sEc2.push(pRes.costs.ec2);
+          sEks.push(pRes.costs.eks);
+        });
+        lineChart.data.datasets[0].data = sGlue;
+        lineChart.data.datasets[1].data = sOnDemand;
+        lineChart.data.datasets[2].data = sWarm;
+        lineChart.data.datasets[3].data = sEc2;
+        lineChart.data.datasets[4].data = sEks;
+        lineChart.update();
+
+        // Update Comparison Table
+        const tbody = document.getElementById('costTableBody');
+        tbody.innerHTML = '';
+        options.forEach(opt => {
+          const isBest = opt.key === winner.key;
+          const tr = document.createElement('tr');
+          tr.className = isBest ? 'bg-emerald-50/70 font-semibold' : 'bg-white';
+          tr.innerHTML =
+            '<td class="px-3 py-2.5 text-slate-900">' + opt.name +
+              (isBest ? ' <span class="ml-1 inline-block px-1.5 py-0.5 rounded text-[9.5px] font-extrabold bg-emerald-600 text-white uppercase">Lowest</span>' : '') +
+            '</td>' +
+            '<td class="px-3 py-2.5 text-slate-700 font-mono text-[11px]">' + opt.cap + '</td>' +
+            '<td class="px-3 py-2.5 text-slate-600">' + opt.sla + '</td>' +
+            '<td class="px-3 py-2.5 text-right font-mono font-bold text-slate-900">' + formatUSD(opt.cost) + '</td>' +
+            '<td class="px-3 py-2.5 text-right font-mono text-slate-600">' + formatUSD(opt.cost * 12) + '</td>';
+          tbody.appendChild(tr);
+        });
+      }
+
+      // Wire all inputs
+      ['sl-jobs', 'sl-records', 'sl-exec-count', 'sl-warm-pool'].forEach(id => {
+        document.getElementById(id).addEventListener('input', updateAll);
+      });
+      ['sel-freq', 'sel-payload', 'sel-exec-mode', 'sel-driver', 'sel-exec-size', 'sel-ec2-plan'].forEach(id => {
+        document.getElementById(id).addEventListener('change', updateAll);
+      });
+
+      // Presets
+      document.getElementById('preset-startup').addEventListener('click', () => {
+        document.getElementById('sl-jobs').value = 15;
+        document.getElementById('sl-records').value = 20;
+        document.getElementById('sel-freq').value = '120';
+        document.getElementById('sl-warm-pool').value = 0;
+        updateAll();
+      });
+      document.getElementById('preset-current').addEventListener('click', () => {
+        document.getElementById('sl-jobs').value = 50;
+        document.getElementById('sl-records').value = 40;
+        document.getElementById('sel-freq').value = '15';
+        document.getElementById('sl-warm-pool').value = 15;
+        updateAll();
+      });
+      document.getElementById('preset-scale').addEventListener('click', () => {
+        document.getElementById('sl-jobs').value = 250;
+        document.getElementById('sl-records').value = 58;
+        document.getElementById('sel-freq').value = '15';
+        document.getElementById('sl-warm-pool').value = 25;
+        updateAll();
+      });
+
+      // Initial render
+      updateAll();
+    })();
+  </script>
+</body>
+</html>
+```
