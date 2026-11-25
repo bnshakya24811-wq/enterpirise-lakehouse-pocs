@@ -1,0 +1,382 @@
+```html
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>AWS Lakehouse — Concise Multi-Account, Compute &amp; Scale Limits Guide</title>
+  <script src="https://cdn.tailwindcss.com/3.4.17"></script>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <style>
+    html, body {
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background-color: #f8fafc;
+      color: #0f172a;
+    }
+    .card {
+      background: #ffffff;
+      border: 1px solid #e2e8f0;
+      border-radius: 14px;
+      box-shadow: 0 4px 16px rgba(15, 23, 42, 0.05);
+    }
+    .row-highlight {
+      background-color: #ecfdf5 !important;
+      outline: 2px solid #10b981;
+      outline-offset: -2px;
+    }
+    .stage-tab.active {
+      background-color: #0f172a;
+      color: #ffffff;
+      border-color: #0f172a;
+    }
+    .tier-btn.active {
+      background-color: #0284c7;
+      color: #ffffff;
+      border-color: #0284c7;
+    }
+  </style>
+</head>
+<body class="min-h-screen bg-slate-50 text-slate-900">
+
+  <!-- Sticky Header -->
+  <header class="sticky top-0 z-30 bg-slate-900 text-white border-b border-slate-800">
+    <div class="max-w-7xl mx-auto px-4 sm:px-6 py-3.5 flex flex-wrap items-center justify-between gap-3">
+      <div>
+        <div class="text-[10.5px] font-bold uppercase tracking-wider text-sky-400">AWS Apache Iceberg Lakehouse &bull; Executive Reference</div>
+        <h1 class="text-base sm:text-lg font-extrabold tracking-tight">Multi-Account Scaling, Compute Evolution &amp; AWS Limits Guide</h1>
+      </div>
+      <!-- Interactive Stage Filter -->
+      <div class="flex flex-wrap items-center gap-1.5" role="group" aria-label="Highlight Stage">
+        <button type="button" class="stage-tab active px-2.5 py-1.5 text-xs font-semibold rounded-lg border border-slate-700 bg-slate-800 text-slate-200 transition-colors" data-stage="all">All Stages</button>
+        <button type="button" class="stage-tab px-2.5 py-1.5 text-xs font-semibold rounded-lg border border-slate-700 bg-slate-800 text-slate-200 transition-colors" data-stage="asis">As-Is</button>
+        <button type="button" class="stage-tab px-2.5 py-1.5 text-xs font-semibold rounded-lg border border-slate-700 bg-slate-800 text-slate-200 transition-colors" data-stage="s1">Stage 1</button>
+        <button type="button" class="stage-tab px-2.5 py-1.5 text-xs font-semibold rounded-lg border border-slate-700 bg-slate-800 text-slate-200 transition-colors" data-stage="s2">Stage 2</button>
+        <button type="button" class="stage-tab px-2.5 py-1.5 text-xs font-semibold rounded-lg border border-slate-700 bg-slate-800 text-slate-200 transition-colors" data-stage="s3">Stage 3</button>
+        <button type="button" class="stage-tab px-2.5 py-1.5 text-xs font-semibold rounded-lg border border-slate-700 bg-slate-800 text-slate-200 transition-colors" data-stage="s4">Stage 4</button>
+      </div>
+    </div>
+  </header>
+
+  <main class="max-w-7xl mx-auto px-4 sm:px-6 py-6 space-y-6">
+
+    <!-- Quick Non-Spark & Cost Threshold Callout (From AWS Spark Compute Cost Analysis) -->
+    <section class="grid grid-cols-1 md:grid-cols-3 gap-4 text-xs">
+      <div class="card p-4 border-l-4 border-emerald-500">
+        <div class="font-extrabold text-emerald-800 uppercase text-[10.5px] tracking-wide">Non-Spark Fast Path (&lt;500 MB / Run)</div>
+        <div class="text-sm font-bold text-slate-900 mt-1">AWS Lambda (Arm64) + Polars / DuckDB</div>
+        <p class="text-slate-600 mt-1">50 jobs × 15 min (146K runs/mo, 50K recs) costs <strong>$19.50–$117/mo</strong> vs. <strong>$2,248/mo</strong> on Glue 6.0 (95%–99% savings) when Spark Iceberg MERGE isn't required.</p>
+      </div>
+      <div class="card p-4 border-l-4 border-sky-500">
+        <div class="font-extrabold text-sky-800 uppercase text-[10.5px] tracking-wide">Glue 6.0 vs. EMR Serverless Crossover</div>
+        <div class="text-sm font-bold text-slate-900 mt-1">~24,250 Runs/Mo or ~4,570 DPU-hrs/Mo</div>
+        <p class="text-slate-600 mt-1">Glue 6.0 ($0.308/DPU-hr) wins low-frequency batch (&lt;16 runs/day). Above hourly micro-batches, <strong>EMR Serverless Graviton</strong> cuts Spark compute 80% ($2,248 &rarr; $442/mo).</p>
+      </div>
+      <div class="card p-4 border-l-4 border-indigo-500">
+        <div class="font-extrabold text-indigo-800 uppercase text-[10.5px] tracking-wide">EMR on EKS / EC2 Crossover</div>
+        <div class="text-sm font-bold text-slate-900 mt-1">&gt;10,000 DPU-hrs/Mo (or &gt;4,000 on Shared EKS)</div>
+        <p class="text-slate-600 mt-1">At 100x–1,000x volume (10–100 GB/run), <strong>EMR on EKS (Graviton + Karpenter Spot)</strong> leads strict-SLA TCO ($6,211/mo vs. $16,863/mo on Glue 6.0).</p>
+      </div>
+    </section>
+
+    <!-- SECTION 1: MULTI-ACCOUNT SCALING STRATEGY TABLE -->
+    <section class="card p-5">
+      <div class="flex flex-wrap items-center justify-between gap-2 mb-3">
+        <div>
+          <h2 class="text-base font-extrabold text-slate-900">1. Multi-Account Scaling Strategy (As-Is &rarr; Stage 4)</h2>
+          <p class="text-xs text-slate-500">Click any stage filter above to highlight aligned rows across all tables below.</p>
+        </div>
+        <span class="text-[11px] font-semibold px-2.5 py-1 rounded-full bg-slate-100 text-slate-700">Same-Region Hub &amp; Spokes = $0/GB S3 Transfer</span>
+      </div>
+      <div class="overflow-x-auto rounded-xl border border-slate-200">
+        <table class="w-full text-left border-collapse text-xs">
+          <thead class="bg-slate-100 text-slate-700 uppercase text-[10.5px]">
+            <tr>
+              <th class="px-3 py-2.5 font-bold w-44">Multi-Account Stage</th>
+              <th class="px-3 py-2.5 font-bold">Storage Layout</th>
+              <th class="px-3 py-2.5 font-bold">Account, IAM &amp; Catalog Architecture</th>
+              <th class="px-3 py-2.5 font-bold">Trigger to Advance</th>
+            </tr>
+          </thead>
+          <tbody class="divide-y divide-slate-200">
+            <tr data-stage-row="asis" class="bg-white transition-colors">
+              <td class="px-3 py-3 font-extrabold text-slate-900">As-Is Baseline<br/><span class="inline-block mt-1 px-2 py-0.5 rounded text-[10px] bg-slate-200 text-slate-700">Current</span></td>
+              <td class="px-3 py-3 text-slate-700">Ingestion in Source Accounts; all Bronze (per-tenant buckets), Silver &amp; Gold in one Lakehouse account.</td>
+              <td class="px-3 py-3 text-slate-700">Per-tenant IAM roles &amp; per-tenant Glue jobs load Bronze &rarr; Silver; BI/AI consumers share the same account.</td>
+              <td class="px-3 py-3 text-slate-600">Execute Stage 1 before tenant growth hits IAM (1,000) &amp; Glue (2,000) caps.</td>
+            </tr>
+            <tr data-stage-row="s1" class="bg-emerald-50/40 transition-colors">
+              <td class="px-3 py-3 font-extrabold text-emerald-950">Stage 1: Harden Hub<br/><span class="inline-block mt-1 px-2 py-0.5 rounded text-[10px] bg-emerald-600 text-white">Start Here</span></td>
+              <td class="px-3 py-3 text-slate-800">Bronze, Silver &amp; Gold stay in Hub; enable <strong>S3 Bucket Keys</strong> &amp; per-domain KMS CMKs.</td>
+              <td class="px-3 py-3 text-slate-800">Storage-thin tenant stacks + <strong>shared ABAC IAM roles</strong>; parameterized EMR Serverless (+ Glue coexist) + SQS pacing; Hub LF-TBAC.</td>
+              <td class="px-3 py-3 text-slate-700">BI dashboards or AI/ML sandboxes compete with ETL or require BU chargeback.</td>
+            </tr>
+            <tr data-stage-row="s2" class="bg-white transition-colors">
+              <td class="px-3 py-3 font-extrabold text-slate-900">Stage 2: Segregate Consumers<br/><span class="inline-block mt-1 px-2 py-0.5 rounded text-[10px] bg-sky-100 text-sky-800">Consumer Spokes</span></td>
+              <td class="px-3 py-3 text-slate-700">Bronze, Silver &amp; Gold remain centralized in Hub.</td>
+              <td class="px-3 py-3 text-slate-700">Move Athena, Redshift Serverless, QuickSight &amp; SageMaker to <strong>Consumer Spoke accounts</strong> reading Hub Gold zero-copy via <strong>AWS RAM + Resource Links</strong>.</td>
+              <td class="px-3 py-3 text-slate-600">On-prem backfills or tenant bursts hit <code>StartJobRun</code> (1 TPS), vCPU/DPU caps, or SLA contention.</td>
+            </tr>
+            <tr data-stage-row="s3" class="bg-white transition-colors">
+              <td class="px-3 py-3 font-extrabold text-slate-900">Stage 3: Segregate Heavy ETL<br/><span class="inline-block mt-1 px-2 py-0.5 rounded text-[10px] bg-indigo-100 text-indigo-800">Producer Spokes</span></td>
+              <td class="px-3 py-3 text-slate-700">Bronze, Silver &amp; Gold remain in Hub (<strong>zero data migration</strong>; <code>BucketOwnerEnforced</code>).</td>
+              <td class="px-3 py-3 text-slate-700">Move On-Prem &amp; high-volume Cloud ETL into <strong>Producer Spoke accounts</strong> reading Hub Bronze and writing Hub Silver/Gold cross-account.</td>
+              <td class="px-3 py-3 text-slate-600">Raw Bronze buckets (&gt;1,000–2,000) crowd Backup/Macie/fees or audits require hard account boundaries.</td>
+            </tr>
+            <tr data-stage-row="s4" class="bg-white transition-colors">
+              <td class="px-3 py-3 font-extrabold text-slate-900">Stage 4: Distribute Raw Bronze<br/><span class="inline-block mt-1 px-2 py-0.5 rounded text-[10px] bg-purple-100 text-purple-800">Enterprise Scale</span></td>
+              <td class="px-3 py-3 text-slate-700"><strong>Raw Bronze buckets</strong> + tenant stacks move to Producer Spokes; <strong>Silver &amp; Gold stay in Hub</strong>.</td>
+              <td class="px-3 py-3 text-slate-700">Producer Spokes own raw Bronze + Bronze &rarr; Silver compute; Hub retains Central Glue Catalog, LF-TBAC, Silver &amp; Gold.</td>
+              <td class="px-3 py-3 text-slate-600">Optional Data Mesh: mega-domains own S3 Table buckets registered centrally in Hub.</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- SECTION 2: COMPUTE-EQUIVALENT STAGE-LEVEL SCALING TABLE -->
+    <section class="card p-5">
+      <div class="flex flex-wrap items-center justify-between gap-2 mb-3">
+        <div>
+          <h2 class="text-base font-extrabold text-slate-900">2. Stage-Level Compute Scaling Strategy (Aligned 1-to-1 With Section 1)</h2>
+          <p class="text-xs text-slate-500">Exact compute runtime, cost benchmark (us-east-1, Nov 2026), and operational pattern at each multi-account stage.</p>
+        </div>
+      </div>
+      <div class="overflow-x-auto rounded-xl border border-slate-200">
+        <table class="w-full text-left border-collapse text-xs">
+          <thead class="bg-slate-100 text-slate-700 uppercase text-[10.5px]">
+            <tr>
+              <th class="px-3 py-2.5 font-bold w-40">Aligned Stage</th>
+              <th class="px-3 py-2.5 font-bold w-48">Compute Runtime</th>
+              <th class="px-3 py-2.5 font-bold">Cost &amp; Sizing Benchmark</th>
+              <th class="px-3 py-2.5 font-bold">Operational Pattern &amp; Upgrade Gate</th>
+            </tr>
+          </thead>
+          <tbody class="divide-y divide-slate-200">
+            <tr data-stage-row="asis" class="bg-white transition-colors">
+              <td class="px-3 py-3 font-extrabold text-slate-900">As-Is Baseline</td>
+              <td class="px-3 py-3 font-semibold text-amber-800">Per-tenant AWS Glue (5.1 / 6.0)</td>
+              <td class="px-3 py-3 font-mono text-slate-700">$2,248/mo (Glue 6.0) &bull; $3,212/mo (5.1)<br/><span class="font-sans text-[10.5px] text-slate-500">50 jobs × 15m, 2-DPU min floor</span></td>
+              <td class="px-3 py-3 text-slate-600">1 Glue job + IAM role per tenant; 2-DPU floor wastes ~75% capacity on 50K-record runs.</td>
+            </tr>
+            <tr data-stage-row="s1" class="bg-emerald-50/40 transition-colors">
+              <td class="px-3 py-3 font-extrabold text-emerald-950">Stage 1 (Hub)<br/><span class="text-[10px] font-semibold text-emerald-700">Step 1: Foundation</span></td>
+              <td class="px-3 py-3 font-bold text-emerald-900">EMR Serverless (Graviton) + Lambda/Polars + Glue Coexist</td>
+              <td class="px-3 py-3 font-mono text-emerald-900">$442/mo (EMR-S ARM) &bull; $531/mo (Warm)<br/><span class="font-sans text-[10.5px] text-slate-600">Lambda Polars: $19.50–$117/mo (non-Spark)</span></td>
+              <td class="px-3 py-3 text-slate-700">Shared Hub app (2 vCPU/8 GB min, Serverless Storage); micro-batch small tenants; light/infrequent jobs (&lt;16/day) stay on Glue 6.0.</td>
+            </tr>
+            <tr data-stage-row="s2" class="bg-white transition-colors">
+              <td class="px-3 py-3 font-extrabold text-slate-900">Stage 2 (Hub ETL + Consumer Spokes)</td>
+              <td class="px-3 py-3 font-semibold text-sky-900">Hub EMR Serverless (Optional Per-Domain Apps) + Spoke BI/AI</td>
+              <td class="px-3 py-3 font-mono text-slate-700">$1,256–$1,947/mo at 10x (500K recs)<br/><span class="font-sans text-[10.5px] text-slate-500">Flex (-60% execs) unlocks at &ge;4 vCPU</span></td>
+              <td class="px-3 py-3 text-slate-600">ETL compute stays in Hub (split noisy domains into separate Hub apps if needed) while Consumer Spokes isolate Athena/Redshift/SageMaker quotas.</td>
+            </tr>
+            <tr data-stage-row="s3" class="bg-white transition-colors">
+              <td class="px-3 py-3 font-extrabold text-slate-900">Stage 3 (Producer Spokes)<br/><span class="text-[10px] font-semibold text-indigo-700">Step 2: Spoke Isolation</span></td>
+              <td class="px-3 py-3 font-bold text-indigo-900">Per-Domain EMR Serverless in Producer Spoke Accounts</td>
+              <td class="px-3 py-3 font-mono text-slate-700">$6,595/mo (Flex) &bull; $11,798/mo (Std)<br/><span class="font-sans text-[10.5px] text-slate-500">100x vol (5M recs / ~10 GB per run)</span></td>
+              <td class="px-3 py-3 text-slate-600">Multiplies <code>StartJobRun</code> TPS &amp; vCPU quotas across dedicated On-Prem &amp; Cloud Producer accounts; submit target change only (zero PySpark rewrites).</td>
+            </tr>
+            <tr data-stage-row="s4" class="bg-white transition-colors">
+              <td class="px-3 py-3 font-extrabold text-slate-900">Stages 3 &amp; 4 (Enterprise)<br/><span class="text-[10px] font-semibold text-purple-700">Step 3: Steady SLA Tier</span></td>
+              <td class="px-3 py-3 font-bold text-purple-900">EMR on EKS (Graviton + Karpenter Spot) or EMR on EC2 (1y SP)</td>
+              <td class="px-3 py-3 font-mono text-slate-700">100x: $6,211/mo (EKS) &bull; $8,393/mo (EC2)<br/>1,000x: $57K–$61K/mo (vs $135K–$159K Glue)</td>
+              <td class="px-3 py-3 text-slate-600">Graduate flat 24/7 pipelines (&gt;10K DPU-hrs/mo, or &gt;4K on existing EKS) to EKS/EC2; bursty &amp; low-volume domains remain on EMR Serverless.</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- SECTION 3: INTERACTIVE STAGE-BY-STAGE DATA/JOB VOLUME STRESS EXPLORER -->
+    <section class="card p-5 space-y-4">
+      <div class="flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <h2 class="text-base font-extrabold text-slate-900">3. Interactive Stress Explorer: What Limits Hit as Data &amp; Jobs Grow?</h2>
+          <p class="text-xs text-slate-500">Pick a growth wave to see exact monthly runs, data volume, DPU-hours, what breaks first, and the exact architectural fix.</p>
+        </div>
+        <div class="flex flex-wrap gap-1.5" id="tierButtons">
+          <button type="button" class="tier-btn active px-3 py-1.5 text-xs font-bold rounded-lg border border-slate-300 bg-white text-slate-700 transition-colors" data-tier="t0">Tier 0: Baseline (50K recs)</button>
+          <button type="button" class="tier-btn px-3 py-1.5 text-xs font-bold rounded-lg border border-slate-300 bg-white text-slate-700 transition-colors" data-tier="t1">Tier 1: 10x (500K recs)</button>
+          <button type="button" class="tier-btn px-3 py-1.5 text-xs font-bold rounded-lg border border-slate-300 bg-white text-slate-700 transition-colors" data-tier="t2">Tier 2: 100x (5M recs)</button>
+          <button type="button" class="tier-btn px-3 py-1.5 text-xs font-bold rounded-lg border border-slate-300 bg-white text-slate-700 transition-colors" data-tier="t3">Tier 3: 1,000x (50M recs)</button>
+        </div>
+      </div>
+
+      <div id="tierBanner" class="rounded-xl bg-slate-900 text-white p-4 grid grid-cols-1 md:grid-cols-4 gap-4 text-xs">
+        <div>
+          <div class="text-[10px] uppercase tracking-wider text-slate-400 font-bold">Workload Scale</div>
+          <div id="tb-scale" class="text-sm font-extrabold text-sky-300 mt-0.5">50 jobs × 15m (146K runs/mo)</div>
+          <div id="tb-vol" class="text-slate-300 mt-0.5">~100 MB/run &bull; 14.6 TB/mo raw</div>
+        </div>
+        <div>
+          <div class="text-[10px] uppercase tracking-wider text-slate-400 font-bold">Compute Demand</div>
+          <div id="tb-dpu" class="text-sm font-extrabold text-amber-300 mt-0.5">7,300 Glue DPU-hrs/mo</div>
+          <div id="tb-cost" class="text-slate-300 mt-0.5">Glue 6.0: $2,248 vs EMR-S: $442</div>
+        </div>
+        <div>
+          <div class="text-[10px] uppercase tracking-wider text-rose-400 font-bold">Primary Limits Hit</div>
+          <div id="tb-limits" class="text-xs text-rose-200 mt-0.5 leading-snug">Glue 2-DPU floor waste; Glue API throttling (&gt;15–40 parallel starts); EMR-S 16 vCPU default quota; 100 VPC ENIs.</div>
+        </div>
+        <div>
+          <div class="text-[10px] uppercase tracking-wider text-emerald-400 font-bold">Best Way to Overcome</div>
+          <div id="tb-fix" class="text-xs text-emerald-200 mt-0.5 leading-snug">Stage 1: Move non-Spark to Lambda Polars, Spark to EMR Serverless Graviton (raise vCPU quota to 200), SQS jitter, S3 Gateway Endpoint.</div>
+        </div>
+      </div>
+    </section>
+
+    <!-- SECTION 4: MASTER LIMITS & OVERCOMING STRATEGY TABLE -->
+    <section class="card p-5">
+      <div class="flex flex-wrap items-center justify-between gap-2 mb-3">
+        <div>
+          <h2 class="text-base font-extrabold text-slate-900">4. Stage-Wise AWS Limits, Cost Traps &amp; Best Ways to Overcome Them</h2>
+          <p class="text-xs text-slate-500">Concrete limits across IAM, Glue, EMR Serverless, S3/Lake Formation, VPC, and EKS — filtered by the stage buttons at the top.</p>
+        </div>
+      </div>
+      <div class="overflow-x-auto rounded-xl border border-slate-200">
+        <table class="w-full text-left border-collapse text-xs">
+          <thead class="bg-slate-100 text-slate-700 uppercase text-[10.5px]">
+            <tr>
+              <th class="px-3 py-2.5 font-bold w-28">Stage Hit</th>
+              <th class="px-3 py-2.5 font-bold w-48">Scale Trigger (Data / Jobs / Time)</th>
+              <th class="px-3 py-2.5 font-bold">Exact AWS Limit or Silent Cost Trap</th>
+              <th class="px-3 py-2.5 font-bold">Best Way to Overcome It</th>
+            </tr>
+          </thead>
+          <tbody id="limitsTableBody" class="divide-y divide-slate-200">
+            <tr data-stage-row="asis" class="bg-white">
+              <td class="px-3 py-3 font-bold text-rose-800">As-Is &rarr; S1</td>
+              <td class="px-3 py-3 font-semibold text-slate-800">~300–500 tenants (2–3 IAM roles each) or &gt;1,000 jobs</td>
+              <td class="px-3 py-3 text-slate-700"><strong>IAM Roles:</strong> 1,000 default / 10,000 hard max; <strong>Glue:</strong> 2,000 jobs, 1,000 triggers, 1,000 queued runs.</td>
+              <td class="px-3 py-3 text-emerald-900 bg-emerald-50/40"><strong>Stage 1 Refactor:</strong> Make tenant stacks storage-thin; switch to <strong>shared ABAC IAM roles</strong> (<code>PrincipalTag/tenant_id</code>) and parameterized EMR Serverless jobs.</td>
+            </tr>
+            <tr data-stage-row="asis" class="bg-white">
+              <td class="px-3 py-3 font-bold text-rose-800">As-Is &rarr; S1</td>
+              <td class="px-3 py-3 font-semibold text-slate-800">50 jobs × 15 min (146K runs/mo) at 50K recs (~100 MB)</td>
+              <td class="px-3 py-3 text-slate-700"><strong>Glue 2-DPU Floor &amp; Throttling:</strong> Wastes ~75% of billed capacity ($2,248/mo on Glue 6.0); &gt;15–40 parallel <code>StartJobRun</code> calls hit throttling; Crawler 10-min min ($105.60/mo hourly).</td>
+              <td class="px-3 py-3 text-emerald-900 bg-emerald-50/40">Pin <code>--glue-version 6.0</code> &amp; 2 workers immediately; move non-Spark to <strong>Lambda Arm64 + Polars</strong> ($20–$117/mo) and Spark to <strong>EMR Serverless Graviton</strong> ($442/mo); remove Crawlers from 15-min loop.</td>
+            </tr>
+            <tr data-stage-row="s1" class="bg-white">
+              <td class="px-3 py-3 font-bold text-amber-800">Stage 1</td>
+              <td class="px-3 py-3 font-semibold text-slate-800">50-job burst on EMR Serverless (14.6 TB/mo raw S3)</td>
+              <td class="px-3 py-3 text-slate-700"><strong>EMR-S Quotas &amp; Traps:</strong> 16 vCPU default account cap; <code>StartJobRun</code> 1 TPS (25 burst); 15-min auto-stop keeps oversized warm pool billing 24/7 ($4,424/mo if 100 vCPU); NAT Gateway S3 tax ($657/mo).</td>
+              <td class="px-3 py-3 text-emerald-900 bg-emerald-50/40">Raise EMR-S vCPU quota to <strong>150–200+</strong>; add 2–5s SQS jitter; size staggered warm pool tightly (~12 vCPU = $531/mo) or $0 idle; attach free <strong>S3 Gateway Endpoint</strong> ($0/GB) &amp; S3 Bucket Keys.</td>
+            </tr>
+            <tr data-stage-row="s2" class="bg-white">
+              <td class="px-3 py-3 font-bold text-sky-800">Stage 2</td>
+              <td class="px-3 py-3 font-semibold text-slate-800">Growing BI dashboards, ad-hoc Athena &amp; AI sandboxes</td>
+              <td class="px-3 py-3 text-slate-700"><strong>Shared Account Concurrency &amp; KMS:</strong> Athena DML/DDL concurrency, shared KMS TPS, and noisy BI queries throttle ETL jobs and blur BU chargeback.</td>
+              <td class="px-3 py-3 text-emerald-900 bg-emerald-50/40"><strong>Stage 2 Consumer Spokes:</strong> Move Athena, Redshift Serverless, QuickSight &amp; SageMaker to dedicated Consumer accounts reading Hub Gold zero-copy via <strong>AWS RAM + Resource Links</strong>.</td>
+            </tr>
+            <tr data-stage-row="s3" class="bg-white">
+              <td class="px-3 py-3 font-bold text-indigo-800">Stage 3</td>
+              <td class="px-3 py-3 font-semibold text-slate-800">10x–100x data (1–10 GB/run; 54,750 DPU-hrs/mo) + On-Prem CDC</td>
+              <td class="px-3 py-3 text-slate-700"><strong>Single-Account Compute &amp; API Ceilings:</strong> Heavy on-prem backfills &amp; 250+ active vCPUs exhaust Hub <code>StartJobRun</code> (1 TPS) and vCPU/DPU quotas; 100+ VPC ENIs crowd small subnets.</td>
+              <td class="px-3 py-3 text-emerald-900 bg-emerald-50/40"><strong>Stage 3 Producer Spokes:</strong> Split On-Prem &amp; heavy Cloud ETL into dedicated Producer Spoke accounts writing Hub Silver/Gold (<code>BucketOwnerEnforced</code>); use &ge;/24 subnets; enable EMR Serverless Flex (-60% execs) for retry-tolerant batch.</td>
+            </tr>
+            <tr data-stage-row="s4" class="bg-white">
+              <td class="px-3 py-3 font-bold text-purple-800">Stage 4</td>
+              <td class="px-3 py-3 font-semibold text-slate-800">&gt;1,000–2,000 Bronze buckets or 1,000x volume (100 GB/run; 2,080+ vCPUs)</td>
+              <td class="px-3 py-3 text-slate-700"><strong>Storage &amp; Mega-Scale Limits:</strong> AWS Backup ARN cap (1,000), S3 bucket fees (&gt;2,000), Glue 1,000 task DPU cap, 30,000 Lake Formation paths; EKS 58 pods/node cap &amp; $438/mo Extended Support cliff.</td>
+              <td class="px-3 py-3 text-emerald-900 bg-emerald-50/40"><strong>Stage 4 + Steady SLA Tier:</strong> Distribute raw Bronze buckets to Producer Spokes (Silver/Gold stay central); graduate flat 24/7 pipelines to <strong>EMR on EKS (Graviton + Karpenter Spot + Prefix Delegation + SOCI)</strong> or <strong>EMR on EC2 (1y SP)</strong>; stay within 14-mo EKS Standard Support.</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <footer class="text-[11px] text-slate-500 text-center pb-4">
+      Grounded in US East (<code>us-east-1</code>) Nov 2026 AWS pricing &amp; quotas: AWS Glue 6.0 ($0.308/DPU-hr), EMR Serverless Graviton ($0.2424/4vCPU-16GB-hr), EMR on EKS (post-Oct 2026 30% cut), and Enterprise Multi-Account Hub-and-Spoke Blueprint.
+    </footer>
+  </main>
+
+  <script>
+    (function () {
+      const TIER_DATA = {
+        t0: {
+          scale: '50 jobs × 15m (146K runs/mo)',
+          vol: '50K recs (~100 MB/run) • 14.6 TB/mo raw',
+          dpu: '7,300 Glue DPU-hrs/mo',
+          cost: 'Glue 6.0: $2,248 | EMR-S ARM: $442 | Lambda: $20–$117',
+          limits: 'Glue 2-DPU floor (~75% waste); Glue API throttling (>15–40 parallel starts); EMR-S 16 vCPU default cap; 100 VPC ENIs; $657/mo NAT trap.',
+          fix: 'Stage 1: Move non-Spark to Lambda Polars; move Spark to EMR Serverless Graviton (raise quota to 200 vCPU); SQS jitter; attach free S3 Gateway Endpoint.'
+        },
+        t1: {
+          scale: '50 jobs × 15m (146K runs/mo — 10x)',
+          vol: '500K recs (~1 GB/run) • 146 TB/mo raw',
+          dpu: '12,167 Glue DPU-hrs/mo',
+          cost: 'Glue 6.0: $3,747 | EMR-S Std: $1,947 | EMR-S Flex: $1,256',
+          limits: 'Single-node Lambda hits RAM limits on complex joins/Iceberg MERGE; BI/AI queries in Hub begin contending with ETL.',
+          fix: 'Stages 1 & 2: Keep ETL on EMR Serverless Graviton (unlocks 60%-off Flex at ≥4 vCPU executors); move BI/AI to Stage 2 Consumer Spokes.'
+        },
+        t2: {
+          scale: '50 jobs × 15m (146K runs/mo — 100x)',
+          vol: '5M recs (~10 GB/run) • 1.46 PB/mo raw',
+          dpu: '54,750 Glue DPU-hrs/mo (~253 avg vCPUs)',
+          cost: 'Glue 6.0: $16,863 | EMR-S Std: $11,798 | EMR EKS Spot: $6,211',
+          limits: 'Hub StartJobRun (1 TPS) & regional vCPU/DPU quotas saturate; Glue lack of Spot/SP makes it 2.7x costlier than EMR on EKS.',
+          fix: 'Stage 3 Producer Spokes: Split heavy Cloud & On-Prem ETL into dedicated Producer accounts; evaluate EMR on EKS (Graviton + Karpenter Spot) for strict-SLA savings.'
+        },
+        t3: {
+          scale: '50 jobs × 15m (146K runs/mo — 1,000x)',
+          vol: '50M recs (~100 GB/run) • 14.6 PB/mo raw',
+          dpu: '438,000 Glue DPU-hrs/mo (~2,080 avg vCPUs)',
+          cost: 'Glue 6.0: $135K–$159K | EMR EKS: $57K–$61K | EMR-S Flex: $50K',
+          limits: 'Exceeds Glue 1,000 task DPU default quota; heavy shuffles force Glue R.2X ($0.364/M-DPU-hr); EKS needs Prefix Delegation, SOCI & XL Control Plane; >1K–2K buckets hit Backup/Macie caps.',
+          fix: 'Stage 4 Enterprise Scale: Distribute raw Bronze buckets to Producer Spokes; run flat 24/7 strict-SLA loads on EMR on EKS (Karpenter Spot) and retry-tolerant batch on EMR-S Flex.'
+        }
+      };
+
+      // Stage filter / highlight across Sections 1, 2, and 4
+      const stageTabs = document.querySelectorAll('.stage-tab');
+      const stageRows = document.querySelectorAll('[data-stage-row]');
+
+      function applyStageFilter(stage) {
+        stageTabs.forEach(btn => {
+          btn.classList.toggle('active', btn.getAttribute('data-stage') === stage);
+        });
+        stageRows.forEach(row => {
+          const rStage = row.getAttribute('data-stage-row');
+          if (stage === 'all') {
+            row.classList.remove('hidden', 'row-highlight');
+          } else {
+            const match = rStage === stage;
+            row.classList.toggle('row-highlight', match);
+            // Keep Section 1 & 2 visible with highlight; filter Section 4 limits table for laser focus
+            if (row.closest('#limitsTableBody')) {
+              row.classList.toggle('hidden', !match);
+            } else {
+              row.classList.remove('hidden');
+            }
+          }
+        });
+      }
+
+      stageTabs.forEach(btn => {
+        btn.addEventListener('click', () => applyStageFilter(btn.getAttribute('data-stage')));
+      });
+
+      // Tier Stress Explorer buttons
+      const tierBtns = document.querySelectorAll('.tier-btn');
+      function selectTier(tierKey) {
+        tierBtns.forEach(b => b.classList.toggle('active', b.getAttribute('data-tier') === tierKey));
+        const d = TIER_DATA[tierKey];
+        document.getElementById('tb-scale').textContent = d.scale;
+        document.getElementById('tb-vol').textContent = d.vol;
+        document.getElementById('tb-dpu').textContent = d.dpu;
+        document.getElementById('tb-cost').textContent = d.cost;
+        document.getElementById('tb-limits').textContent = d.limits;
+        document.getElementById('tb-fix').textContent = d.fix;
+      }
+
+      tierBtns.forEach(btn => {
+        btn.addEventListener('click', () => selectTier(btn.getAttribute('data-tier')));
+      });
+
+      selectTier('t0');
+    })();
+  </script>
+</body>
+</html>
+```
